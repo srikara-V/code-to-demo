@@ -1,0 +1,28 @@
+{
+  "name": "repo-to-demo-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c gray,green \"node --env-file-if-exists=.env server.js\" \"vite\"",
+    "server": "node --env-file-if-exists=.env server.js",
+    "web": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2",
+    "highlight.js": "^11.10.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0"
+  }
+}

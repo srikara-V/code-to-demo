@@ -1,0 +1,18 @@
+services:
+  # Builds the agent image. Jobs run as throwaway `docker run --rm` containers
+  # from this image (see app/jobs.js) — one per generation. This service itself
+  # is only used to build/tag the image, not run long-lived.
+  codex:
+    build:
+      context: .
+      dockerfile: codex/Dockerfile
+    image: demo-video-codex:latest
+    container_name: demo-video-codex
+    environment:
+      CODEX_HOME: /codex-home
+      VIDEO_PROJECT: /opt/video-project
+    volumes:
+      - ./.codex:/codex-home        # CODEX_HOME: config.toml + auth.json
+      - ./:/workspace               # the repo the agent works on (output -> /workspace/out)
+    working_dir: /workspace
+    command: ["sleep", "infinity"]

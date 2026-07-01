@@ -1,0 +1,553 @@
+:root {
+  --fg: #1a1a1a;
+  --muted: #6b7280;
+  --border: #e3e3e3;
+  --bg: #ffffff;
+  --panel: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 24px;
+  min-height: 100%;
+}
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 13px;
+}
+
+/* Connect screen: the button, with a quiet "or try demo" text link beneath it. */
+.connect {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.demo-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.demo-link:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+/* Connect to GitHub — a single quiet button, nothing else on the page. */
+.gh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  line-height: 1;
+  padding: 11px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.gh-btn:hover {
+  border-color: #b9b9b9;
+}
+.gh-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Pinned to the viewport corners: brand (logo + username) left, disconnect right. */
+.corners {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  padding: 12px 22px;
+  min-height: 40px;
+  font-size: 14px;
+}
+.corners .link {
+  margin-left: auto; /* push Disconnect to the right edge */
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.brand svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Centered repo dropdown + minimal arrow submit — pinned to the middle of the bar. */
+.picker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: clamp(280px, 40vw, 520px);
+}
+.picker .select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.submit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 0.15s ease, opacity 0.15s ease;
+}
+.submit svg {
+  width: 18px;
+  height: 18px;
+}
+.submit:hover:not(:disabled) {
+  border-color: #b9b9b9;
+}
+.submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.link:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.select {
+  width: 100%;
+  font: inherit;
+  font-size: 15px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+}
+.select:focus {
+  outline: none;
+  border-color: #9a9a9a;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+/* Demo split view: editor (left) | video (right), below the fixed top bar. */
+.split {
+  position: fixed;
+  top: 64px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+}
+.pane {
+  height: 100%;
+  overflow: hidden;
+}
+.pane.right {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+}
+.divider {
+  flex: 0 0 auto;
+  width: 6px;
+  cursor: col-resize;
+  background: var(--border);
+}
+.divider:hover {
+  background: #7c7c7c;
+}
+
+/* mini VS Code-like editor */
+.editor {
+  display: flex;
+  height: 100%;
+  background: #0d1117;
+  color: #c9d1d9;
+}
+.filetree {
+  width: 184px;
+  flex: 0 0 auto;
+  overflow: auto;
+  padding: 8px 0;
+  font-size: 13px;
+  background: #0b0e13;
+  border-right: 1px solid #1f242c;
+}
+.ft-root {
+  padding: 4px 12px 8px;
+  color: #8b949e;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.ft-item {
+  padding: 3px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #c9d1d9;
+}
+.ft-item.dir {
+  color: #8b949e;
+}
+.ft-item.file {
+  cursor: pointer;
+}
+.ft-item.file:hover {
+  background: #161b22;
+}
+.ft-item.active {
+  background: #1f2937;
+  color: #fff;
+}
+.codeview {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tabbar {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: #8b949e;
+  border-bottom: 1px solid #1f242c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.code-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+}
+pre.code {
+  display: flex;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: #0d1117;
+}
+.gutter {
+  display: flex;
+  flex-direction: column;
+  text-align: right;
+  padding: 12px 10px;
+  color: #6e7681;
+  user-select: none;
+  flex: 0 0 auto;
+  background: #0d1117;
+  position: sticky;
+  left: 0;
+}
+pre.code code.hljs {
+  display: block;
+  padding: 12px 16px;
+  white-space: pre;
+  background: transparent;
+}
+
+/* right pane: progress while running, video when ready */
+.right-inner {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  overflow: auto;
+  background: var(--bg);
+}
+.right-inner .demo-video {
+  width: 100%;
+}
+
+/* Wrapper that holds the right pane content + the close button. */
+.right-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+}
+.right-wrap > .right-inner {
+  flex: 1 1 auto;
+}
+
+/* Close (collapse) the video panel; sits top-right, left of the redo button. */
+.panel-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.panel-close:hover {
+  border-color: #9a9a9a;
+  color: var(--fg);
+}
+.panel-close svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Reopen pill shown over the full-width editor when the panel is closed. */
+.panel-reopen {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.panel-reopen:hover {
+  border-color: #9a9a9a;
+}
+.panel-reopen svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Video pane with a floating redo (regenerate-from-scratch) button — demo only. */
+.video-pane {
+  position: relative;
+}
+.redo-btn {
+  position: absolute;
+  top: 16px;
+  right: 58px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.2s ease;
+}
+.redo-btn:hover {
+  border-color: #9a9a9a;
+  transform: rotate(-45deg);
+}
+.redo-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Live Codex agent transcript (right pane, phase 1) */
+.right-inner.agent-pane {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
+}
+.transcript {
+  flex: 1 1 auto;
+  width: 100%;
+  overflow: auto;
+  padding: 14px 18px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.t-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.t-eff {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 10px;
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3fb950;
+  animation: pulse 1.1s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.tline {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 8px;
+}
+.tline.reasoning {
+  color: var(--muted);
+}
+.tline.message {
+  color: var(--fg);
+}
+.tline.command {
+  color: #2f9e6f;
+}
+.tline.meta {
+  color: var(--muted);
+  font-style: italic;
+}
+.tline.error {
+  color: #d9534f;
+}
+.steps.in-pane {
+  width: 100%;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+}
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(520px, 92vw);
+  font-size: 14px;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+}
+.step.done,
+.step.running {
+  color: var(--fg);
+}
+.step .ico {
+  width: 16px;
+  text-align: center;
+  color: var(--muted);
+}
+.step.done .ico {
+  color: var(--fg);
+}
+.step .detail {
+  margin-left: auto;
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.demo-video {
+  width: min(960px, 92vw);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #000;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #ececec;
+    --muted: #9aa0a6;
+    --border: #2b2b2b;
+    --bg: #0e0e0e;
+    --panel: #161616;
+  }
+  .gh-btn:hover,
+  .submit:hover:not(:disabled) {
+    border-color: #3a3a3a;
+  }
+}

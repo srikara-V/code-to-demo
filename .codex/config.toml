@@ -1,0 +1,25 @@
+# CODEX_HOME for the demo-video agent. Mounted into the codex container at
+# /codex-home (see ../codex/Dockerfile + ../docker-compose.yml). auth.json lives
+# alongside this file (gitignored — it holds the Codex/ChatGPT credentials).
+
+cli_auth_credentials_store = "file"
+
+# gpt-5.5 with high reasoning effort.
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+
+# Dangerous: full access, no approval prompts. Intended ONLY for the isolated
+# codex container, so headless `codex exec` never blocks on a human.
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+
+# Let the agent reach the network (pip/npm/ElevenLabs/the running app).
+[sandbox_workspace_write]
+network_access = true
+
+# Trust the mounted repo so the agent runs without a per-project prompt.
+[projects."/workspace"]
+trust_level = "trusted"
+
+[projects."/private/tmp/claude-501/-Users-srikaravishnubhatla-personal-project-to-demo-video/f18fd32d-6f52-4ee4-ad3b-8a7178579e09/scratchpad"]
+trust_level = "trusted"

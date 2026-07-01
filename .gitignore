@@ -1,0 +1,32 @@
+# Final rendered videos land in the repo-root out/ — keep large media out of git
+out/*.mp4
+out/jobs/
+
+# Secrets — never commit the ElevenLabs key or OAuth app credentials
+.eleven_key
+*.key
+.env
+
+# Bundled demo app (fee-calculator server.py + its DB .env) — local-only, carries secrets
+demo-repo/
+
+# Codex CODEX_HOME — auth.json holds credentials; sessions/logs are runtime noise.
+# config.toml IS tracked (it's the model/permissions config, no secrets).
+.codex/auth.json
+.codex/sessions/
+.codex/log/
+.codex/history.jsonl
+.codex/*.lock
+
+# Node / OS
+node_modules/
+.DS_Store
+*.log
+
+# Codex runtime temp (plugins is an embedded git repo — do not track)
+.codex/.tmp/
+
+# Handoff/reference material — kept LOCAL ONLY.
+# Contains sensitive, non-public info about specific named officials, vendors,
+# and deal strategy from the original example engagement. Never publish. See README.
+instructions/

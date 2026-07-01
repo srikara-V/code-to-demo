@@ -1,0 +1,17 @@
+# Keep the build context small and secrets OUT of the image. Only
+# instructions/video-project is COPYied in; everything mounted at runtime
+# (the repo at /workspace, .codex at /codex-home) is excluded here.
+.git
+**/node_modules
+app
+out
+.codex
+demo-repo
+instructions/rendered
+instructions/grants-tool-reference
+instructions/docs
+**/.DS_Store
+**/.eleven_key
+**/*.key
+**/.env
+.env
