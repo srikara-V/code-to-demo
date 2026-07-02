@@ -149,6 +149,9 @@ app.post("/api/auth/github/logout", (req, res) => {
 // Create a job (returns immediately; it queues + runs in its own container).
 app.post("/api/jobs", (req, res) => {
   const repo = (req.body && req.body.repo) || "demo";
+  // Optional repo-level env vars (.env content) written into the repo before the
+  // agent runs. Capped so it can't be abused as bulk storage.
+  const env = (req.body && typeof req.body.env === "string" ? req.body.env : "").slice(0, 64_000);
   // Real repos need the user's token (to fetch the tarball server-side); the demo
   // uses the bundled repo and needs none.
   let token = null;
@@ -156,7 +159,7 @@ app.post("/api/jobs", (req, res) => {
     token = req.cookies.gh_token;
     if (!token) return res.status(401).json({ error: "not connected" });
   }
-  const job = createJob({ repo, token });
+  const job = createJob({ repo, token, env });
   res.json(jobView(job));
 });
 // Poll a job's status (queued/running/done/error + queue position + videoReady).

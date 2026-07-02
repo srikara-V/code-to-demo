@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { SplitView } from "./SplitView";
 import { CodeExplorer } from "./CodeExplorer";
+import { RepoPanel } from "./RepoPanel";
 import { AgentTranscript, codexLine, type AgentLine } from "./AgentStream";
 
 type User = { login: string; name: string | null; avatar_url: string };
@@ -23,6 +24,7 @@ export default function App() {
   const [videoOpen, setVideoOpen] = useState(true);
   const [runRepo, setRunRepo] = useState<string | null>(null); // repo of the active/last run
   const [agentError, setAgentError] = useState<string | null>(null);
+  const [env, setEnv] = useState(""); // .env vars for the selected repo (Env tab)
 
   // "or try demo": skip GitHub, show the cached walkthrough instantly (the redo
   // button can regenerate it from scratch).
@@ -72,7 +74,7 @@ export default function App() {
     setQueuePos(-1);
     setVideoOpen(true);
     setAgentRunning(true);
-    const created = await (await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo }) })).json();
+    const created = await (await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo, env }) })).json();
     if (!created.id) {
       setAgentRunning(false);
       setAgentDone(true);
@@ -138,6 +140,7 @@ export default function App() {
   // shows a fresh placeholder for the newly selected repo.
   const onSelectRepo = (repo: string) => {
     setSelected(repo);
+    setEnv("");
     setRunRepo(null);
     setJobId(null);
     setAgentLines([]);
@@ -271,10 +274,10 @@ export default function App() {
         />
       )}
 
-      {/* Real repo: show its codebase on select; the ↑ button starts the agent. */}
+      {/* Real repo: Code + Env tabs on the left; the ↑ button starts the agent. */}
       {!demo && selected && (
         <SplitView
-          left={<CodeExplorer repo={selected} />}
+          left={<RepoPanel repo={selected} env={env} onEnvChange={setEnv} />}
           rightOpen={videoOpen}
           onReopen={() => setVideoOpen(true)}
           right={

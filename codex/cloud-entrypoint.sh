@@ -36,6 +36,11 @@ else
   cp -a /tmp/x/. /workspace/repo/
 fi
 
+# Optional repo-level env vars → .env in the checkout, so the app can start.
+if [ -n "${REPO_ENV_GCS:-}" ]; then
+  gcloud storage cp "$REPO_ENV_GCS" /workspace/repo/.env && echo "[entrypoint] wrote repo .env"
+fi
+
 # Run the agent (task baked into the image at build time).
 codex exec --json --skip-git-repo-check --cd /workspace "$(cat /opt/agent-task.txt)"
 

@@ -67,13 +67,14 @@ const agentTask = (repoDir) =>
     "Think out loud as you go.",
   ].join("\n");
 
-export function createJob({ repo = "demo", token = null } = {}) {
+export function createJob({ repo = "demo", token = null, env = "" } = {}) {
   const id = crypto.randomBytes(6).toString("hex");
   const dir = path.join(JOBS_DIR, id);
   const job = {
     id,
     repo,
     token, // GitHub OAuth token for a real repo; stays server-side, never in jobView
+    env, // optional .env content written into the repo before the agent runs
     status: "queued", // queued | running | done | error | canceled
     createdAt: Date.now(),
     startedAt: null,
@@ -248,6 +249,10 @@ async function prepareWorkspace(job) {
     });
     fs.rmSync(tarPath, { force: true });
   }
+  // Optional repo-level env vars → .env in the checkout (the app + agent read it).
+  if (job.env && job.env.trim()) {
+    fs.writeFileSync(path.join(repoDst, ".env"), job.env.endsWith("\n") ? job.env : job.env + "\n");
+  }
   // per-job CODEX_HOME so concurrent runs don't share sessions/auth state
   const home = path.join(job.dir, "codex-home");
   fs.mkdirSync(home, { recursive: true });
@@ -394,6 +399,12 @@ const cloudRunJobsRunner = {
     } finally {
       fs.rmSync(tmp, { force: true });
     }
+    // Optional repo-level env vars → a GCS object the entrypoint drops as .env.
+    let repoEnvUri = "";
+    if (job.env && job.env.trim()) {
+      repoEnvUri = `gs://${GCP.bucket}/${gcsKey(job, "repo.env")}`;
+      await bucket.file(gcsKey(job, "repo.env")).save(job.env.endsWith("\n") ? job.env : job.env + "\n");
+    }
 
     // 2) Trigger the Cloud Run Job execution with per-run overrides. The image's
     //    entrypoint pulls repo.tar.gz from GCS, runs the agent, uploads the mp4.
@@ -409,6 +420,7 @@ const cloudRunJobsRunner = {
               { name: "JOB_ID", value: job.id },
               { name: "REPO_TARBALL_GCS", value: `gs://${GCP.bucket}/${gcsKey(job, "repo.tar.gz")}` },
               { name: "OUTPUT_GCS", value: job.cloud.videoUri },
+              ...(repoEnvUri ? [{ name: "REPO_ENV_GCS", value: repoEnvUri }] : []),
             ],
           },
         ],
