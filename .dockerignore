@@ -9,7 +9,6 @@ out
 demo-repo
 instructions/rendered
 instructions/grants-tool-reference
-instructions/docs
 **/.DS_Store
 **/.eleven_key
 **/*.key

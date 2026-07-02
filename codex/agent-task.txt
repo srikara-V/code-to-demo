@@ -1,0 +1,30 @@
+You are generating a narrated screen-walkthrough VIDEO of the web app whose source is in /workspace/repo,
+entirely from scratch, for a first-time user. Work autonomously and finish with the file
+/workspace/out/walkthrough.mp4. All tooling is installed; you have full permissions and network access.
+
+The app can be ANY stack (Node/Next/Vite, Python/Flask/Django, Go, Rails, a static site, etc.) —
+do NOT assume a language, command, framework, port, or any selectors. Figure it all out yourself.
+
+Reference: the reusable recording/render pipeline + how-to are in /workspace/instructions
+(read docs/04-extend-or-replicate.md and video-project/HANDOFF-onboarding-videos.md). A ready-to-run
+copy of that pipeline (npm deps + Remotion browser pre-installed) is at /opt/video-project — author and run it there.
+
+Do this end to end:
+1) Inspect /workspace/repo: read the README and whatever manifests exist (package.json, requirements.txt/
+   pyproject, Gemfile, go.mod, Dockerfile/compose, Procfile/Makefile, .env(.example)) to learn what the
+   app is and how it is meant to be installed and started.
+2) Install its dependencies and START the app the way the project intends. Determine the host:port/URL it
+   serves on by reading its own startup output (do not assume a port). Wait until that URL returns 200
+   before recording (the first request may be slow).
+3) cp /workspace/instructions/video-project/.eleven_key /opt/video-project/.eleven_key
+4) In /opt/video-project author record/tour.mjs FROM SCRATCH for THIS app:
+   export META = { baseUrl: '<the URL you found>', startUrl: '<entry path>', viewport: { width: 1440, height: 900 } }
+   and STEPS = 6–9 objects { id, est, narration, run: async (drv) => {…} } using the drv helpers
+   (moveTo, click, scrollBy, scrollToTop, pause). Explore the RUNNING UI (curl pages / read the served
+   markup) to pick real selectors, then walk a new user through the app's core flow end to end.
+   Narration: warm, plain, instructional — say what the user can DO, not just what they see.
+5) cd /opt/video-project && node walk-tts.mjs   (ElevenLabs narration)
+6) node _runtour.mjs                            (records against the running app)
+7) mkdir -p /workspace/out && npx remotion render src/index.ts Walkthrough /workspace/out/walkthrough.mp4 --overwrite
+8) Verify /workspace/out/walkthrough.mp4 exists and is non-empty; print its size. If any step fails, debug and retry.
+Think out loud as you go.

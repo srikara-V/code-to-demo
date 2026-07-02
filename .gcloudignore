@@ -1,0 +1,17 @@
+# Controls what `gcloud builds submit` uploads as the build context. Without
+# this file, gcloud falls back to .gitignore — which excludes all of
+# instructions/, breaking the image build. Keep only what the image needs:
+# codex/ (Dockerfile + entrypoint + task + config) and instructions/video-project
+# + instructions/docs. Everything heavy/secret/irrelevant is excluded.
+.git
+**/node_modules
+app
+out
+.codex
+demo-repo
+instructions/rendered
+instructions/grants-tool-reference
+**/.DS_Store
+**/.env
+**/*.key
+**/.eleven_key
