@@ -14,8 +14,11 @@ echo "[entrypoint] job=${JOB_ID:-?} repo=${REPO_TARBALL_GCS:-?}"
 
 : "${CODEX_HOME:=/codex-home}"
 mkdir -p "$CODEX_HOME"
-[ -f /secrets/codex-auth ] && cp /secrets/codex-auth "$CODEX_HOME/auth.json"
-[ -f /secrets/eleven-key ] && cp /secrets/eleven-key /opt/video-project/.eleven_key
+# Creds arrive as env vars (secret-backed) or file mounts — accept either.
+if [ -f /secrets/codex-auth ]; then cp /secrets/codex-auth "$CODEX_HOME/auth.json"
+elif [ -n "${CODEX_AUTH_JSON:-}" ]; then printf '%s' "$CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"; fi
+if [ -f /secrets/eleven-key ]; then cp /secrets/eleven-key /opt/video-project/.eleven_key
+elif [ -n "${ELEVEN_KEY:-}" ]; then printf '%s' "$ELEVEN_KEY" > /opt/video-project/.eleven_key; fi
 
 # The agent expects the reference pipeline under /workspace/instructions/video-project.
 mkdir -p /workspace/instructions
