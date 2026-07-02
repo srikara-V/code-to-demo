@@ -480,12 +480,19 @@ function tailExecutionLogs(job, executionName) {
       const [entries] = await logging.getEntries({ filter: filter(), orderBy: "timestamp asc", pageSize: 200 });
       for (const e of entries) {
         if (e.metadata?.timestamp) cursor = new Date(e.metadata.timestamp).toISOString();
-        const text = typeof e.data === "string" ? e.data : e.data?.message || "";
-        if (!text) continue;
-        try {
-          emit(job, "codex", JSON.parse(text));
-        } catch {
-          emit(job, "log", { text });
+        const d = e.data;
+        if (d && typeof d === "object") {
+          // jsonPayload: codex `--json` emits its events as structured logs, so
+          // `d` IS the event object the UI's codexLine() expects.
+          emit(job, "codex", d);
+        } else {
+          const text = String(d ?? "").trim();
+          if (!text) continue;
+          try {
+            emit(job, "codex", JSON.parse(text));
+          } catch {
+            emit(job, "log", { text });
+          }
         }
       }
     } catch {
