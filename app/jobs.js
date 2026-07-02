@@ -1,12 +1,16 @@
-// Job engine: each "generate a walkthrough" request becomes a Job. Jobs run in
-// their OWN throwaway container (docker run --rm) so they never collide on the
-// app port, /opt/video-project, or the output file. A bounded pool limits how
-// many run at once; the rest queue. Events are buffered per-job so an SSE client
-// can disconnect/reconnect (or arrive late) and still see the full stream — the
-// run is decoupled from the browser. In-memory only; no database.
+// Job engine: each "generate a walkthrough" request becomes a Job. The engine
+// (queue, state machine, per-job event buffer + SSE, cancel) is environment-
+// agnostic. WHERE a job's container actually runs is pluggable via a "runner":
+//   - localDockerRunner  → `docker run --rm` on this host (dev / self-hosted).
+//   - cloudRunJobsRunner → a Cloud Run Job execution (pay-per-use, scales to
+//                           zero when idle) with inputs/outputs on GCS.
+// The runner is picked from the environment (see `runner` at the bottom): local
+// by default, cloudrun when running on Cloud Run (K_SERVICE set) or when
+// JOB_BACKEND=cloudrun. In-memory job state only; no database.
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -77,7 +81,8 @@ export function createJob({ repo = "demo", token = null } = {}) {
     dir,
     videoPath: path.join(dir, "result", "walkthrough.mp4"),
     container: `codex-job-${id}`,
-    proc: null,
+    proc: null, // local: the docker child process
+    cloud: null, // cloudrun: { execution, videoReady, videoUri } bookkeeping
     error: null,
     events: [],
     subscribers: new Set(),
@@ -98,9 +103,15 @@ export function jobView(job) {
     id: job.id,
     status: job.status,
     position: job.status === "queued" ? Math.max(0, queue.indexOf(job.id)) : -1,
-    videoReady: fs.existsSync(job.videoPath),
+    videoReady: runner.videoReady(job),
     error: job.error,
   };
+}
+
+// Serve a finished job's video (backend-aware: local file vs. GCS). Exported so
+// the HTTP layer stays agnostic to where the video actually lives.
+export function serveJobVideo(job, res) {
+  return runner.serveVideo(job, res);
 }
 
 function writeSse(res, event, data) {
@@ -116,7 +127,7 @@ function emit(job, event, data) {
 export function subscribe(job, res) {
   for (const e of job.events) writeSse(res, e.event, e.data);
   if (job.status === "done" || job.status === "error" || job.status === "canceled") {
-    writeSse(res, "end", { status: job.status, videoReady: fs.existsSync(job.videoPath), error: job.error });
+    writeSse(res, "end", { status: job.status, videoReady: runner.videoReady(job), error: job.error });
     res.end();
     return;
   }
@@ -133,13 +144,8 @@ export function cancelJob(job) {
     if (i >= 0) queue.splice(i, 1);
   }
   job.status = "canceled";
-  if (job.proc) {
-    try {
-      job.proc.kill("SIGKILL");
-    } catch {}
-  }
   try {
-    spawn("docker", ["kill", job.container]);
+    runner.cancel(job);
   } catch {}
   emit(job, "end", { status: "canceled" });
 }
@@ -162,12 +168,47 @@ function pump() {
   }
 }
 
-// Download the selected GitHub repo as a tarball (server-side, with the user's
-// OAuth token) and extract it into the per-job scratch dir. The token stays on
-// the host and never enters the agent container — the container only ever sees
-// plain source files. This is the same throwaway checkout the demo uses, just
-// sourced from GitHub instead of the bundled demo-repo/.
-async function fetchRepoTarball(job, dst) {
+// Orchestrator: environment-agnostic. Drives status transitions + the event
+// stream and delegates the actual container execution to the selected runner.
+async function runJob(job) {
+  if (job.status === "canceled") return;
+  try {
+    job.status = "running";
+    job.startedAt = Date.now();
+    emit(job, "status", jobView(job));
+
+    const { ok, error } = await runner.run(job);
+
+    if (job.status === "canceled") return;
+    job.status = ok ? "done" : "error";
+    if (!ok && !job.error) job.error = error || "job failed";
+    // Demo redo: refresh the cached "first" video so the next visitor sees the latest.
+    if (ok && job.repo === "demo") {
+      try {
+        runner.refreshDemoCache(job);
+      } catch {}
+    }
+    job.endedAt = Date.now();
+    emit(job, "end", { status: job.status, videoReady: runner.videoReady(job), error: job.error });
+  } catch (e) {
+    job.status = "error";
+    job.error = String(e?.message || e);
+    emit(job, "end", { status: "error", error: job.error });
+  } finally {
+    for (const res of job.subscribers) {
+      try {
+        res.end();
+      } catch {}
+    }
+    job.subscribers.clear();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared input helper: download a GitHub repo tarball to a local file. The
+// user's OAuth token stays server-side; the container only ever sees source.
+// ---------------------------------------------------------------------------
+async function fetchTarball(job, tarPath) {
   if (!job.token) throw new Error("no GitHub token for this job");
   emit(job, "notice", { text: `Fetching ${job.repo} from GitHub…` });
   const r = await fetch(`https://api.github.com/repos/${job.repo}/tarball`, {
@@ -179,21 +220,16 @@ async function fetchRepoTarball(job, dst) {
     redirect: "follow",
   });
   if (!r.ok || !r.body) throw new Error(`GitHub tarball download failed (${r.status} ${r.statusText})`);
-  const tarPath = path.join(job.dir, "repo.tar.gz");
   await new Promise((resolve, reject) => {
     const out = fs.createWriteStream(tarPath);
     Readable.fromWeb(r.body).pipe(out).on("finish", resolve).on("error", reject);
   });
-  fs.mkdirSync(dst, { recursive: true });
-  // GitHub tarballs nest everything under one "<owner>-<repo>-<sha>/" dir.
-  await new Promise((resolve, reject) => {
-    const p = spawn("tar", ["xzf", tarPath, "-C", dst, "--strip-components=1"]);
-    p.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`tar extract failed (exit ${c})`))));
-    p.on("error", reject);
-  });
-  fs.rmSync(tarPath, { force: true });
 }
 
+// ===========================================================================
+// LOCAL runner — `docker run --rm` on this host, with host bind-mounts. This is
+// exactly the original behavior (dev / self-hosted).
+// ===========================================================================
 async function prepareWorkspace(job) {
   fs.mkdirSync(path.join(job.dir, "result"), { recursive: true });
   // throwaway checkout of the target repo (deleted when the job ends)
@@ -201,7 +237,16 @@ async function prepareWorkspace(job) {
   if (job.repo === "demo") {
     fs.cpSync(DEMO_REPO, repoDst, { recursive: true });
   } else {
-    await fetchRepoTarball(job, repoDst);
+    const tarPath = path.join(job.dir, "repo.tar.gz");
+    await fetchTarball(job, tarPath);
+    fs.mkdirSync(repoDst, { recursive: true });
+    // GitHub tarballs nest everything under one "<owner>-<repo>-<sha>/" dir.
+    await new Promise((resolve, reject) => {
+      const p = spawn("tar", ["xzf", tarPath, "-C", repoDst, "--strip-components=1"]);
+      p.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`tar extract failed (exit ${c})`))));
+      p.on("error", reject);
+    });
+    fs.rmSync(tarPath, { force: true });
   }
   // per-job CODEX_HOME so concurrent runs don't share sessions/auth state
   const home = path.join(job.dir, "codex-home");
@@ -211,86 +256,256 @@ async function prepareWorkspace(job) {
   return { repoDst, home };
 }
 
-async function runJob(job) {
-  if (job.status === "canceled") return;
-  let repoDst, home;
-  try {
-    job.status = "running";
-    job.startedAt = Date.now();
-    emit(job, "status", jobView(job));
-    ({ repoDst, home } = await prepareWorkspace(job));
+const localDockerRunner = {
+  async run(job) {
+    let repoDst, home;
+    try {
+      ({ repoDst, home } = await prepareWorkspace(job));
 
-    const args = [
-      "run", "--rm", "--name", job.container,
-      "--cpus", JOB_CPUS, "--memory", JOB_MEMORY,
-      "-v", `${repoDst}:/workspace/repo`,
-      "-v", `${INSTRUCTIONS}:/workspace/instructions:ro`,
-      "-v", `${path.join(job.dir, "result")}:/workspace/out`,
-      "-v", `${home}:/codex-home`,
-      "-e", "CODEX_HOME=/codex-home",
-      IMAGE,
-      "codex", "exec", "--json", "--skip-git-repo-check", "--cd", "/workspace", agentTask("/workspace/repo"),
-    ];
+      const args = [
+        "run", "--rm", "--name", job.container,
+        "--cpus", JOB_CPUS, "--memory", JOB_MEMORY,
+        "-v", `${repoDst}:/workspace/repo`,
+        "-v", `${INSTRUCTIONS}:/workspace/instructions:ro`,
+        "-v", `${path.join(job.dir, "result")}:/workspace/out`,
+        "-v", `${home}:/codex-home`,
+        "-e", "CODEX_HOME=/codex-home",
+        IMAGE,
+        "codex", "exec", "--json", "--skip-git-repo-check", "--cd", "/workspace", agentTask("/workspace/repo"),
+      ];
 
-    const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
-    job.proc = child;
-    let buf = "";
-    child.stdout.on("data", (d) => {
-      buf += d.toString();
-      let nl;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!line) continue;
-        try {
-          emit(job, "codex", JSON.parse(line));
-        } catch {
-          emit(job, "log", { text: line });
+      const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+      job.proc = child;
+      let buf = "";
+      child.stdout.on("data", (d) => {
+        buf += d.toString();
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          try {
+            emit(job, "codex", JSON.parse(line));
+          } catch {
+            emit(job, "log", { text: line });
+          }
+        }
+      });
+      child.stderr.on("data", (d) => emit(job, "log", { text: d.toString() }));
+
+      await new Promise((resolve) => {
+        child.on("close", () => resolve());
+        child.on("error", (e) => {
+          job.error = `Could not start container: ${e.message}`;
+          resolve();
+        });
+      });
+
+      if (job.status === "canceled") return { ok: false };
+      const ok = fs.existsSync(job.videoPath);
+      return { ok, error: ok ? null : job.error || "agent finished without producing /workspace/out/walkthrough.mp4" };
+    } catch (e) {
+      return { ok: false, error: String(e?.message || e) };
+    } finally {
+      job.proc = null;
+      // keep result/ (the video); drop the bulky throwaway inputs
+      for (const p of [repoDst, home]) {
+        if (p) {
+          try {
+            fs.rmSync(p, { recursive: true, force: true });
+          } catch {}
         }
       }
-    });
-    child.stderr.on("data", (d) => emit(job, "log", { text: d.toString() }));
-
-    await new Promise((resolve) => {
-      child.on("close", () => resolve());
-      child.on("error", (e) => {
-        job.error = `Could not start container: ${e.message}`;
-        resolve();
-      });
-    });
-
-    if (job.status !== "canceled") {
-      const ok = fs.existsSync(job.videoPath);
-      job.status = ok ? "done" : "error";
-      if (!ok && !job.error) job.error = "agent finished without producing /workspace/out/walkthrough.mp4";
-      // Demo redo: refresh the cached "first" video so the next visitor sees the latest.
-      if (ok && job.repo === "demo") {
-        try {
-          fs.copyFileSync(job.videoPath, DEMO_CACHE);
-        } catch {}
-      }
-      job.endedAt = Date.now();
-      emit(job, "end", { status: job.status, videoReady: ok, error: job.error });
     }
-  } catch (e) {
-    job.status = "error";
-    job.error = String(e?.message || e);
-    emit(job, "end", { status: "error", error: job.error });
-  } finally {
-    job.proc = null;
-    for (const res of job.subscribers) {
+  },
+  cancel(job) {
+    if (job.proc) {
       try {
-        res.end();
+        job.proc.kill("SIGKILL");
       } catch {}
     }
-    job.subscribers.clear();
-    // keep result/ (the video); drop the bulky throwaway inputs
-    for (const p of [repoDst, home]) {
-      if (p) {
-        try {
-          fs.rmSync(p, { recursive: true, force: true });
-        } catch {}
-      }
+    try {
+      spawn("docker", ["kill", job.container]);
+    } catch {}
+  },
+  videoReady(job) {
+    return fs.existsSync(job.videoPath);
+  },
+  serveVideo(job, res) {
+    if (!fs.existsSync(job.videoPath)) return res.status(404).json({ error: "no video" });
+    res.sendFile(job.videoPath);
+  },
+  refreshDemoCache(job) {
+    try {
+      fs.copyFileSync(job.videoPath, DEMO_CACHE);
+    } catch {}
+  },
+};
+
+// ===========================================================================
+// CLOUD RUN runner — each job is a Cloud Run Job execution: pay-per-use, scales
+// to zero when idle. Inputs/outputs go through GCS; the token never enters the
+// job container. Requires (deploy-time): the codex image deployed as a Cloud Run
+// Job, a GCS bucket, Secret Manager for codex/ElevenLabs creds baked into the
+// job, and these deps: @google-cloud/run, @google-cloud/storage, @google-cloud/logging.
+//
+// NOTE: This path is wired but only runs in a configured GCP environment; it is
+// dynamic-imported so local dev needs none of the above installed.
+// ===========================================================================
+const GCP = {
+  project: process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT,
+  region: process.env.GCP_REGION || "us-central1",
+  jobName: process.env.CODEX_JOB_NAME, // the deployed Cloud Run Job resource name
+  bucket: process.env.GCS_BUCKET, // gs bucket for per-job inputs/outputs
+};
+const gcsKey = (job, name) => `jobs/${job.id}/${name}`;
+
+const cloudRunJobsRunner = {
+  async run(job) {
+    for (const [k, v] of Object.entries(GCP)) {
+      if (!v) return { ok: false, error: `Cloud Run backend not configured: missing ${k} (set env vars + deploy the job)` };
     }
-  }
+    let Storage, JobsClient;
+    try {
+      ({ Storage } = await import("@google-cloud/storage"));
+      ({ JobsClient } = await import("@google-cloud/run").then((m) => m.v2));
+    } catch {
+      return { ok: false, error: "Cloud Run backend deps missing: npm i @google-cloud/run @google-cloud/storage @google-cloud/logging" };
+    }
+    const storage = new Storage({ projectId: GCP.project });
+    const bucket = storage.bucket(GCP.bucket);
+    const outKey = gcsKey(job, "walkthrough.mp4");
+    job.cloud = { videoReady: false, videoUri: `gs://${GCP.bucket}/${outKey}` };
+
+    // 1) Stage the repo tarball in GCS (demo: bundle demo-repo; real: GitHub).
+    emit(job, "notice", { text: "Staging repo for the cloud job…" });
+    const tmp = path.join(os.tmpdir(), `job-${job.id}.tar.gz`);
+    try {
+      if (job.repo === "demo") {
+        await new Promise((resolve, reject) => {
+          const p = spawn("tar", ["czf", tmp, "-C", DEMO_REPO, "."]);
+          p.on("close", (c) => (c === 0 ? resolve() : reject(new Error("tar failed"))));
+          p.on("error", reject);
+        });
+      } else {
+        await fetchTarball(job, tmp);
+      }
+      await bucket.upload(tmp, { destination: gcsKey(job, "repo.tar.gz") });
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+
+    // 2) Trigger the Cloud Run Job execution with per-run overrides. The image's
+    //    entrypoint pulls repo.tar.gz from GCS, runs the agent, uploads the mp4.
+    emit(job, "notice", { text: "Launching Cloud Run job…" });
+    const runClient = new JobsClient();
+    const name = `projects/${GCP.project}/locations/${GCP.region}/jobs/${GCP.jobName}`;
+    const [op] = await runClient.runJob({
+      name,
+      overrides: {
+        containerOverrides: [
+          {
+            env: [
+              { name: "JOB_ID", value: job.id },
+              { name: "REPO_TARBALL_GCS", value: `gs://${GCP.bucket}/${gcsKey(job, "repo.tar.gz")}` },
+              { name: "OUTPUT_GCS", value: job.cloud.videoUri },
+            ],
+          },
+        ],
+      },
+    });
+    const executionName = op.metadata?.name;
+    job.cloud.execution = executionName;
+
+    // 3) Stream the execution's stdout (codex --json) from Cloud Logging while
+    //    we wait for it to finish, re-emitting the same SSE events the UI expects.
+    const stopLogs = tailExecutionLogs(job, executionName);
+    try {
+      await op.promise();
+    } finally {
+      await stopLogs();
+    }
+
+    // 4) Success == the output object exists in GCS.
+    const [exists] = await bucket.file(outKey).exists();
+    job.cloud.videoReady = exists;
+    return { ok: exists, error: exists ? null : "cloud job finished without producing the video" };
+  },
+  cancel(job) {
+    if (!job.cloud?.execution) return;
+    import("@google-cloud/run")
+      .then((m) => new m.v2.ExecutionsClient().cancelExecution({ name: job.cloud.execution }))
+      .catch(() => {});
+  },
+  videoReady(job) {
+    return !!job.cloud?.videoReady;
+  },
+  async serveVideo(job, res) {
+    if (!job.cloud?.videoReady) return res.status(404).json({ error: "no video" });
+    try {
+      const { Storage } = await import("@google-cloud/storage");
+      const [url] = await new Storage({ projectId: GCP.project })
+        .bucket(GCP.bucket)
+        .file(gcsKey(job, "walkthrough.mp4"))
+        .getSignedUrl({ action: "read", expires: Date.now() + 60 * 60 * 1000 });
+      res.redirect(url);
+    } catch (e) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  },
+  refreshDemoCache(job) {
+    // Copy the produced object to the cloud demo-cache key (best-effort).
+    import("@google-cloud/storage")
+      .then(({ Storage }) => {
+        const bucket = new Storage({ projectId: GCP.project }).bucket(GCP.bucket);
+        return bucket.file(gcsKey(job, "walkthrough.mp4")).copy(bucket.file("demo/walkthrough.mp4"));
+      })
+      .catch(() => {});
+  },
+};
+
+// Tail a Cloud Run Job execution's stdout via Cloud Logging, re-emitting each
+// codex `--json` line as a "codex" SSE event (falling back to "log"). Returns a
+// stop() that drains once more and detaches. Polling keeps deps/quotas simple.
+function tailExecutionLogs(job, executionName) {
+  let stopped = false;
+  let cursor = new Date(Date.now() - 5000).toISOString();
+  const execId = executionName?.split("/").pop();
+  const filter = () =>
+    `resource.type="cloud_run_job" labels."run.googleapis.com/execution_name"="${execId}" timestamp>"${cursor}"`;
+  const drain = async () => {
+    try {
+      const { Logging } = await import("@google-cloud/logging");
+      const logging = new Logging({ projectId: GCP.project });
+      const [entries] = await logging.getEntries({ filter: filter(), orderBy: "timestamp asc", pageSize: 200 });
+      for (const e of entries) {
+        if (e.metadata?.timestamp) cursor = new Date(e.metadata.timestamp).toISOString();
+        const text = typeof e.data === "string" ? e.data : e.data?.message || "";
+        if (!text) continue;
+        try {
+          emit(job, "codex", JSON.parse(text));
+        } catch {
+          emit(job, "log", { text });
+        }
+      }
+    } catch {
+      /* transient logging error; try again next tick */
+    }
+  };
+  const timer = setInterval(() => {
+    if (!stopped) drain();
+  }, 2500);
+  return async () => {
+    stopped = true;
+    clearInterval(timer);
+    await drain();
+  };
 }
+
+// ---------------------------------------------------------------------------
+// Runner selection: local by default; cloudrun on Cloud Run (K_SERVICE is set
+// by the platform) or when explicitly forced with JOB_BACKEND=cloudrun.
+// ---------------------------------------------------------------------------
+const BACKEND = (process.env.JOB_BACKEND || (process.env.K_SERVICE ? "cloudrun" : "local")).toLowerCase();
+const runner = BACKEND === "cloudrun" ? cloudRunJobsRunner : localDockerRunner;
+console.log(`[jobs] execution backend: ${BACKEND}`);

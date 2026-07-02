@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createJob, getJob, jobView, subscribe, unsubscribe, cancelJob } from "./jobs.js";
+import { createJob, getJob, jobView, subscribe, unsubscribe, cancelJob, serveJobVideo } from "./jobs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEMO_DIR = path.resolve(__dirname, "../demo-repo");
@@ -180,11 +180,11 @@ app.get("/api/jobs/:id/events", (req, res) => {
   subscribe(job, res);
   req.on("close", () => unsubscribe(job, res));
 });
-// Serve the video that job produced.
+// Serve the video that job produced (backend-aware: local file or GCS redirect).
 app.get("/api/jobs/:id/video", (req, res) => {
   const job = getJob(req.params.id);
-  if (!job || !fs.existsSync(job.videoPath)) return res.status(404).json({ error: "no video" });
-  res.sendFile(job.videoPath);
+  if (!job) return res.status(404).json({ error: "no video" });
+  return serveJobVideo(job, res);
 });
 
 // Demo only: the cached "first" walkthrough, shown instantly (the redo button
@@ -278,5 +278,16 @@ app.get("/api/repo/file", async (req, res) => {
     res.status(500).json({ error: String(e?.message || e) });
   }
 });
+
+// In production, serve the built frontend (app/dist) from THIS origin so the
+// browser hits one host for both the SPA and /api — keeps the httpOnly auth
+// cookie same-site (no CORS, no proxy). Enabled automatically when a build exists.
+const DIST = path.resolve(__dirname, "dist");
+if (fs.existsSync(DIST)) {
+  app.use(express.static(DIST));
+  // SPA fallback: any non-/api route serves index.html.
+  app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(DIST, "index.html")));
+  console.log(`serving frontend from ${DIST}`);
+}
 
 app.listen(PORT, () => console.log(`auth server on http://localhost:${PORT}  (redirect_uri = ${REDIRECT_URI})`));
