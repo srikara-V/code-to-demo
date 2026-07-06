@@ -8,12 +8,10 @@ import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createJob, getJob, jobView, subscribe, unsubscribe, cancelJob, serveJobVideo } from "./jobs.js";
+import { createJob, getJob, jobView, subscribe, unsubscribe, cancelJob, serveJobVideo, demoVideoReady, serveDemoVideo } from "./jobs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEMO_DIR = path.resolve(__dirname, "../demo-repo");
-// The cached "first" demo video (refreshed whenever a demo redo finishes).
-const DEMO_VIDEO = path.resolve(__dirname, "../out/walkthrough.mp4");
 const HIDE_FILES = new Set([".env", ".DS_Store"]); // never expose secrets
 const SKIP_DIRS = new Set(["__pycache__", "node_modules", ".git", ".venv", "venv", ".idea", ".vscode"]);
 
@@ -191,12 +189,10 @@ app.get("/api/jobs/:id/video", (req, res) => {
 });
 
 // Demo only: the cached "first" walkthrough, shown instantly (the redo button
-// kicks off a fresh job which refreshes this on success — see jobs.js).
-app.get("/api/demo/has-video", (req, res) => res.json({ ready: fs.existsSync(DEMO_VIDEO) }));
-app.get("/api/demo/cached-video", (req, res) => {
-  if (!fs.existsSync(DEMO_VIDEO)) return res.status(404).json({ error: "no demo video yet" });
-  res.sendFile(DEMO_VIDEO);
-});
+// kicks off a fresh job which refreshes this on success — see jobs.js). Backend-
+// aware: local mode reads a file on disk, cloud mode the GCS demo-cache object.
+app.get("/api/demo/has-video", async (req, res) => res.json({ ready: await demoVideoReady() }));
+app.get("/api/demo/cached-video", (req, res) => serveDemoVideo(res));
 // Explicit cancel (kills the container + dequeues).
 app.post("/api/jobs/:id/cancel", (req, res) => {
   const job = getJob(req.params.id);

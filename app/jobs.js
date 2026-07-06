@@ -115,6 +115,16 @@ export function serveJobVideo(job, res) {
   return runner.serveVideo(job, res);
 }
 
+// Demo cache (backend-aware): the "or try demo" walkthrough, refreshed by each
+// successful demo run. Local mode reads/serves a file on disk; cloud mode the
+// GCS object the cloud runner actually writes to (so fresh renders surface).
+export function demoVideoReady() {
+  return runner.demoVideoExists();
+}
+export function serveDemoVideo(res) {
+  return runner.serveDemoVideo(res);
+}
+
 function writeSse(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
@@ -345,6 +355,13 @@ const localDockerRunner = {
       fs.copyFileSync(job.videoPath, DEMO_CACHE);
     } catch {}
   },
+  demoVideoExists() {
+    return fs.existsSync(DEMO_CACHE);
+  },
+  serveDemoVideo(res) {
+    if (!fs.existsSync(DEMO_CACHE)) return res.status(404).json({ error: "no demo video yet" });
+    res.sendFile(DEMO_CACHE);
+  },
 };
 
 // ===========================================================================
@@ -364,6 +381,10 @@ const GCP = {
   bucket: process.env.GCS_BUCKET, // gs bucket for per-job inputs/outputs
 };
 const gcsKey = (job, name) => `jobs/${job.id}/${name}`;
+// The shared demo-cache object: successful demo runs overwrite it, and the
+// /api/demo/cached-video endpoint serves it (in cloud mode) so visitors see the
+// latest generated walkthrough instead of a stale local file.
+const DEMO_CACHE_KEY = "demo/walkthrough.mp4";
 
 const cloudRunJobsRunner = {
   async run(job) {
@@ -470,9 +491,30 @@ const cloudRunJobsRunner = {
     import("@google-cloud/storage")
       .then(({ Storage }) => {
         const bucket = new Storage({ projectId: GCP.project }).bucket(GCP.bucket);
-        return bucket.file(gcsKey(job, "walkthrough.mp4")).copy(bucket.file("demo/walkthrough.mp4"));
+        return bucket.file(gcsKey(job, "walkthrough.mp4")).copy(bucket.file(DEMO_CACHE_KEY));
       })
       .catch(() => {});
+  },
+  async demoVideoExists() {
+    try {
+      const { Storage } = await import("@google-cloud/storage");
+      const [exists] = await new Storage({ projectId: GCP.project }).bucket(GCP.bucket).file(DEMO_CACHE_KEY).exists();
+      return exists;
+    } catch {
+      return false;
+    }
+  },
+  async serveDemoVideo(res) {
+    try {
+      const { Storage } = await import("@google-cloud/storage");
+      const file = new Storage({ projectId: GCP.project }).bucket(GCP.bucket).file(DEMO_CACHE_KEY);
+      const [exists] = await file.exists();
+      if (!exists) return res.status(404).json({ error: "no demo video yet" });
+      const [url] = await file.getSignedUrl({ action: "read", expires: Date.now() + 60 * 60 * 1000 });
+      res.redirect(url);
+    } catch (e) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
   },
 };
 
