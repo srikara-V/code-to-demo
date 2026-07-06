@@ -362,6 +362,49 @@ pre.code code.hljs {
   height: 15px;
 }
 
+/* Job controls, shown left of the X while a job is live: Stop (kills the run)
+   and Resume-stream (re-attaches the SSE stream). Same round chip as .panel-close. */
+.panel-stop,
+.panel-stream {
+  position: absolute;
+  top: 16px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.panel-stop {
+  right: 56px;
+}
+.panel-stream {
+  right: 96px;
+}
+.panel-stop:hover {
+  border-color: #d66;
+  color: #e66;
+}
+.panel-stream:hover {
+  border-color: #9a9a9a;
+  color: var(--fg);
+}
+.panel-stop svg {
+  width: 13px;
+  height: 13px;
+}
+.panel-stream svg {
+  width: 15px;
+  height: 15px;
+}
+
 /* Reopen pill shown over the full-width editor when the panel is closed. */
 .panel-reopen {
   position: absolute;

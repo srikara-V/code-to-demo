@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SplitView } from "./SplitView";
 import { CodeExplorer } from "./CodeExplorer";
 import { RepoPanel } from "./RepoPanel";
@@ -6,6 +6,33 @@ import { AgentTranscript, codexLine, type AgentLine } from "./AgentStream";
 
 type User = { login: string; name: string | null; avatar_url: string };
 type Repo = { full_name: string; name: string; private: boolean; url: string };
+
+// A job survives page reloads on the server; we remember which one this tab was
+// watching so we can reconnect its live stream / video when the user comes back.
+type SavedJob = { id: string; repo: string; demo: boolean };
+const SAVED_JOB_KEY = "ptv.activeJob";
+function loadSavedJob(): SavedJob | null {
+  try {
+    const s = localStorage.getItem(SAVED_JOB_KEY);
+    return s ? (JSON.parse(s) as SavedJob) : null;
+  } catch {
+    return null;
+  }
+}
+function saveJob(j: SavedJob) {
+  try {
+    localStorage.setItem(SAVED_JOB_KEY, JSON.stringify(j));
+  } catch {
+    /* storage disabled — reconnect just won't survive a reload */
+  }
+}
+function clearSavedJob() {
+  try {
+    localStorage.removeItem(SAVED_JOB_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 export default function App() {
   const [status, setStatus] = useState<"loading" | "anon" | "authed">("loading");
@@ -25,21 +52,32 @@ export default function App() {
   const [runRepo, setRunRepo] = useState<string | null>(null); // repo of the active/last run
   const [agentError, setAgentError] = useState<string | null>(null);
   const [env, setEnv] = useState(""); // .env vars for the selected repo (Env tab)
+  const [streaming, setStreaming] = useState(false); // is the SSE stream currently attached?
+  const esRef = useRef<EventSource | null>(null); // live event stream for the active job
 
-  // "or try demo": skip GitHub, show the cached walkthrough instantly (the redo
-  // button can regenerate it from scratch).
-  const startDemo = async () => {
+  // Enter demo mode (no GitHub): the bundled fee-calculator repo + cached walkthrough.
+  const enterDemoMode = () => {
     setDemo(true);
     setUser({ login: "demo", name: "demo", avatar_url: "" });
     setRepos([{ full_name: "fee-calculator", name: "fee-calculator", private: false, url: "" }]);
     setSelected("fee-calculator");
     setDemoActive(true);
     setStatus("authed");
+  };
+
+  // "or try demo": skip GitHub, show the cached walkthrough instantly (the redo
+  // button can regenerate it from scratch).
+  const startDemo = async () => {
+    enterDemoMode();
     const r = await fetch("/api/demo/has-video").then((x) => x.json()).catch(() => ({ ready: false }));
     setCachedReady(!!r.ready);
   };
 
   const disconnect = async () => {
+    esRef.current?.close();
+    esRef.current = null;
+    setStreaming(false);
+    clearSavedJob();
     if (demo) {
       setDemo(false);
       setDemoActive(false);
@@ -59,6 +97,51 @@ export default function App() {
     }
     await fetch("/api/auth/github/logout", { method: "POST" });
     location.reload();
+  };
+
+  // Open (or re-open) the live event stream for a job id. The server replays the
+  // whole log from the start before tailing, so we reset the transcript first and
+  // let the replay rebuild it — this makes attach idempotent and safe to call on
+  // reconnect (page reload, resume-stream button) without duplicating lines.
+  const attachStream = (id: string) => {
+    esRef.current?.close();
+    setAgentLines([]);
+    const es = new EventSource(`/api/jobs/${id}/events`);
+    esRef.current = es;
+    setStreaming(true);
+    es.addEventListener("status", (e) => {
+      const v = JSON.parse((e as MessageEvent).data);
+      setQueuePos(v.status === "queued" ? v.position : -1);
+    });
+    es.addEventListener("notice", (e) => {
+      // Host-side progress (e.g. fetching the repo from GitHub) before the agent starts.
+      const v = JSON.parse((e as MessageEvent).data);
+      if (v?.text) setAgentLines((prev) => [...prev, { kind: "meta", text: v.text }]);
+    });
+    es.addEventListener("codex", (e) => {
+      setQueuePos(-1);
+      const line = codexLine(JSON.parse((e as MessageEvent).data));
+      if (line) setAgentLines((prev) => [...prev, line]);
+    });
+    es.addEventListener("end", async (e) => {
+      const v = JSON.parse((e as MessageEvent).data);
+      setAgentRunning(false);
+      setAgentDone(true);
+      if (v.error) setAgentError(v.error);
+      es.close();
+      esRef.current = null;
+      setStreaming(false);
+      if (v.status === "done" || v.videoReady) {
+        const head = await fetch(`/api/jobs/${id}/video`, { method: "HEAD" }).catch(() => null);
+        setVideoReady(!!head?.ok);
+      }
+    });
+    es.onopen = () => setStreaming(true);
+    es.onerror = () => {
+      // Connection dropped. EventSource retries on its own; we also surface the
+      // Resume-stream button by reflecting the disconnected state.
+      setStreaming(false);
+    };
   };
 
   // Create a job for `repo` ("demo" or a real full_name), then stream its event
@@ -83,50 +166,73 @@ export default function App() {
     }
     setJobId(created.id);
     setQueuePos(created.position ?? -1);
+    saveJob({ id: created.id, repo, demo });
+    attachStream(created.id);
+  };
 
-    const es = new EventSource(`/api/jobs/${created.id}/events`);
-    es.addEventListener("status", (e) => {
-      const v = JSON.parse((e as MessageEvent).data);
-      setQueuePos(v.status === "queued" ? v.position : -1);
-    });
-    es.addEventListener("notice", (e) => {
-      // Host-side progress (e.g. fetching the repo from GitHub) before the agent starts.
-      const v = JSON.parse((e as MessageEvent).data);
-      if (v?.text) setAgentLines((prev) => [...prev, { kind: "meta", text: v.text }]);
-    });
-    es.addEventListener("codex", (e) => {
-      setQueuePos(-1);
-      const line = codexLine(JSON.parse((e as MessageEvent).data));
-      if (line) setAgentLines((prev) => [...prev, line]);
-    });
-    es.addEventListener("end", async (e) => {
-      const v = JSON.parse((e as MessageEvent).data);
-      setAgentRunning(false);
-      setAgentDone(true);
-      if (v.error) setAgentError(v.error);
-      es.close();
-      if (v.status === "done" || v.videoReady) {
-        const head = await fetch(`/api/jobs/${created.id}/video`, { method: "HEAD" }).catch(() => null);
-        setVideoReady(!!head?.ok);
-      }
-    });
-    es.onerror = () => {
-      // transient; EventSource auto-reconnects and the log replays
-    };
+  // Actually terminate the running job (kills the Cloud Run execution / container
+  // via the cancel endpoint), unlike the X which only collapses the panel.
+  const stopJob = async () => {
+    const id = jobId;
+    esRef.current?.close();
+    esRef.current = null;
+    setStreaming(false);
+    setAgentRunning(false);
+    setAgentDone(true);
+    setQueuePos(-1);
+    setAgentError("Generation stopped.");
+    clearSavedJob();
+    if (id) await fetch(`/api/jobs/${id}/cancel`, { method: "POST" }).catch(() => {});
+  };
+
+  // Re-attach the live stream to the active job (e.g. after a dropped connection).
+  const resumeStream = () => {
+    if (jobId) attachStream(jobId);
   };
 
   useEffect(() => {
     (async () => {
       const me = await fetch("/api/me");
-      if (!me.ok) {
+      let authed = false;
+      if (me.ok) {
+        setUser(await me.json());
+        const r = await fetch("/api/repos");
+        if (r.ok) setRepos((await r.json()).repos as Repo[]);
+        setStatus("authed");
+        authed = true;
+      } else {
         setStatus("anon");
+      }
+
+      // Reconnect to the job this tab was watching before it was left/reloaded.
+      const saved = loadSavedJob();
+      if (!saved) return;
+      const st = await fetch(`/api/jobs/${saved.id}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+      if (!st) {
+        clearSavedJob(); // job is gone (finished long ago / server restarted)
         return;
       }
-      setUser(await me.json());
-      const r = await fetch("/api/repos");
-      if (r.ok) setRepos((await r.json()).repos as Repo[]);
-      setStatus("authed");
+      if (saved.demo) {
+        enterDemoMode();
+        const hv = await fetch("/api/demo/has-video").then((x) => x.json()).catch(() => ({ ready: false }));
+        setCachedReady(!!hv.ready);
+      } else if (authed) {
+        setSelected(saved.repo);
+      } else {
+        clearSavedJob(); // a real-repo job but we're no longer signed in
+        return;
+      }
+      setRunRepo(saved.repo);
+      setJobId(saved.id);
+      setDemoActive(true);
+      setVideoOpen(true);
+      setAgentRunning(st.status === "queued" || st.status === "running");
+      if (st.status === "queued") setQueuePos(st.position ?? 0);
+      attachStream(saved.id); // replays the log, then tails (or ends immediately if done)
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Entry point for the next step (generate the walkthrough for the chosen repo).
@@ -139,6 +245,10 @@ export default function App() {
   // Switching to a different repo clears the previous run so the right pane
   // shows a fresh placeholder for the newly selected repo.
   const onSelectRepo = (repo: string) => {
+    esRef.current?.close();
+    esRef.current = null;
+    setStreaming(false);
+    clearSavedJob();
     setSelected(repo);
     setEnv("");
     setRunRepo(null);
@@ -151,11 +261,11 @@ export default function App() {
   };
 
   const generating = agentRunning;
+  const jobActive = agentRunning || queuePos >= 0;
 
   // Right pane for a run: a running job shows the live agent; otherwise the
   // (new or cached) video with a redo button to regenerate the same repo.
   const renderRunRight = () => {
-    const jobActive = agentRunning || queuePos >= 0;
     const regenerate = () => runJob(demo ? "demo" : runRepo || selected);
     if (jobActive) {
       return (
@@ -189,6 +299,30 @@ export default function App() {
       </div>
     );
   };
+
+  // The right pane's chrome: the X (collapse only), plus — while a job is live —
+  // a Stop button (actually kills the job) and a Resume-stream button (re-attaches
+  // the SSE stream if it dropped). Shared by the demo and real-repo layouts.
+  const renderRightPane = () => (
+    <div className="right-wrap">
+      <button className="panel-close" onClick={() => setVideoOpen(false)} title="Close panel" aria-label="Close panel">
+        <CloseIcon />
+      </button>
+      {jobActive && (
+        <>
+          <button className="panel-stop" onClick={stopJob} title="Stop the running job" aria-label="Stop the running job">
+            <StopIcon />
+          </button>
+          {!streaming && (
+            <button className="panel-stream" onClick={resumeStream} title="Resume live stream" aria-label="Resume live stream">
+              <StreamIcon />
+            </button>
+          )}
+        </>
+      )}
+      {renderRunRight()}
+    </div>
+  );
 
   if (status === "loading") {
     return (
@@ -263,14 +397,7 @@ export default function App() {
           left={<CodeExplorer />}
           rightOpen={videoOpen}
           onReopen={() => setVideoOpen(true)}
-          right={
-            <div className="right-wrap">
-              <button className="panel-close" onClick={() => setVideoOpen(false)} title="Close panel" aria-label="Close panel">
-                <CloseIcon />
-              </button>
-              {renderRunRight()}
-            </div>
-          }
+          right={renderRightPane()}
         />
       )}
 
@@ -280,14 +407,7 @@ export default function App() {
           left={<RepoPanel repo={selected} env={env} onEnvChange={setEnv} />}
           rightOpen={videoOpen}
           onReopen={() => setVideoOpen(true)}
-          right={
-            <div className="right-wrap">
-              <button className="panel-close" onClick={() => setVideoOpen(false)} title="Close panel" aria-label="Close panel">
-                <CloseIcon />
-              </button>
-              {renderRunRight()}
-            </div>
-          }
+          right={renderRightPane()}
         />
       )}
     </>
@@ -299,6 +419,22 @@ function CloseIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <line x1="6" y1="6" x2="18" y2="18" />
       <line x1="18" y1="6" x2="6" y2="18" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor" stroke="none">
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}
+
+function StreamIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 12 7 12 10 5 14 19 17 12 21 12" />
     </svg>
   );
 }
