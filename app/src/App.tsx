@@ -123,7 +123,7 @@ export default function App() {
       const line = codexLine(JSON.parse((e as MessageEvent).data));
       if (line) setAgentLines((prev) => [...prev, line]);
     });
-    es.addEventListener("end", async (e) => {
+    es.addEventListener("end", (e) => {
       const v = JSON.parse((e as MessageEvent).data);
       setAgentRunning(false);
       setAgentDone(true);
@@ -131,10 +131,11 @@ export default function App() {
       es.close();
       esRef.current = null;
       setStreaming(false);
-      if (v.status === "done" || v.videoReady) {
-        const head = await fetch(`/api/jobs/${id}/video`, { method: "HEAD" }).catch(() => null);
-        setVideoReady(!!head?.ok);
-      }
+      // Trust the server's readiness flag from the SSE end event. We used to probe
+      // the video URL with fetch(HEAD), but that follows the 302 to GCS and fails
+      // CORS (the bucket has none) — even though the <video> element loads the same
+      // redirect fine. So the probe wrongly reported "no video" for real repos.
+      setVideoReady(v.status === "done" || !!v.videoReady);
     });
     es.onopen = () => setStreaming(true);
     es.onerror = () => {
