@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>board</title>
+<style>
+  @font-face {
+    font-family: "Caveat";
+    src: url("assets/fonts/caveat.woff2") format("woff2");
+    font-weight: 400 700;
+  }
+  @font-face {
+    font-family: "Patrick Hand";
+    src: url("assets/fonts/patrickhand.woff2") format("woff2");
+  }
+  html, body { margin: 0; padding: 0; background: #0d1014; }
+  #stage { width: 1920px; height: 1080px; display: block; }
+  text { user-select: none; }
+</style>
+</head>
+<body>
+<svg id="stage" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="vig" cx="50%" cy="46%" r="75%">
+      <stop offset="0%" stop-color="#131820" />
+      <stop offset="72%" stop-color="#0f1318" />
+      <stop offset="100%" stop-color="#0a0d11" />
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="1920" height="1080" fill="url(#vig)" />
+  <g id="els"></g>
+  <rect id="fader" x="0" y="0" width="1920" height="1080" fill="#000" opacity="0" />
+</svg>
+<script type="module" src="board.js"></script>
+</body>
+</html>

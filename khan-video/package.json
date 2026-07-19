@@ -1,0 +1,16 @@
+{
+  "name": "khan-video",
+  "version": "1.0.0",
+  "description": "",
+  "main": "board.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@ffmpeg-installer/linux-x64": "^4.1.0",
+    "playwright": "^1.56.1"
+  }
+}
